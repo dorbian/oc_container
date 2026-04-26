@@ -6,6 +6,7 @@ import { Provider } from "@/provider"
 import { ModelsDev } from "@/provider"
 import { ProviderAuth } from "@/provider"
 import { ProviderID } from "@/provider/schema"
+import { Instance } from "@/project/instance"
 import { mapValues } from "remeda"
 import { errors } from "../../error"
 import { lazy } from "@/util/lazy"
@@ -78,6 +79,36 @@ export const ProviderRoutes = lazy(() =>
         jsonRequest("ProviderRoutes.auth", c, function* () {
           const svc = yield* ProviderAuth.Service
           return yield* svc.methods()
+        }),
+    )
+    .post(
+      "/refresh",
+      describeRoute({
+        summary: "Refresh provider and model metadata",
+        description:
+          "Reload provider/model metadata for this instance, then dispose the current instance so remote clients reconnect with fresh state.",
+        operationId: "provider.refresh",
+        responses: {
+          200: {
+            description: "Provider metadata refresh scheduled",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+        },
+      }),
+      async (c) =>
+        jsonRequest("ProviderRoutes.refresh", c, function* () {
+          yield* Effect.promise(() => ModelsDev.refresh(true))
+          // Dispose on the next macrotask so the current HTTP response can flush first.
+          yield* Effect.sync(() => {
+            setTimeout(() => {
+              void Instance.dispose()
+            }, 0)
+          })
+          return true
         }),
     )
     .post(

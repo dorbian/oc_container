@@ -7,6 +7,8 @@ import { mapValues } from "remeda"
 import { Effect, Layer, Schema } from "effect"
 import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiError, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
 import { Authorization } from "./auth"
+import * as InstanceState from "@/effect/instance-state"
+import { markInstanceForDisposal } from "./lifecycle"
 
 const root = "/provider"
 
@@ -30,6 +32,16 @@ export const ProviderApi = HttpApi.make("provider")
             identifier: "provider.auth",
             summary: "Get provider auth methods",
             description: "Retrieve available authentication methods for all AI providers.",
+          }),
+        ),
+        HttpApiEndpoint.post("refresh", `${root}/refresh`, {
+          success: Schema.Boolean,
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "provider.refresh",
+            summary: "Refresh provider and model metadata",
+            description:
+              "Reload provider/model metadata for this instance, then dispose the current instance so remote clients reconnect with fresh state.",
           }),
         ),
         HttpApiEndpoint.post("authorize", `${root}/:providerID/oauth/authorize`, {
@@ -104,6 +116,12 @@ export const providerHandlers = Layer.unwrap(
       return yield* svc.methods()
     })
 
+    const refresh = Effect.fn("ProviderHttpApi.refresh")(function* () {
+      yield* Effect.promise(() => ModelsDev.refresh(true))
+      yield* markInstanceForDisposal(yield* InstanceState.context)
+      return true
+    })
+
     const authorize = Effect.fn("ProviderHttpApi.authorize")(function* (ctx: {
       params: { providerID: ProviderID }
       payload: ProviderAuth.AuthorizeInput
@@ -134,7 +152,12 @@ export const providerHandlers = Layer.unwrap(
     })
 
     return HttpApiBuilder.group(ProviderApi, "provider", (handlers) =>
-      handlers.handle("list", list).handle("auth", auth).handle("authorize", authorize).handle("callback", callback),
+      handlers
+        .handle("list", list)
+        .handle("auth", auth)
+        .handle("refresh", refresh)
+        .handle("authorize", authorize)
+        .handle("callback", callback),
     )
   }),
 ).pipe(
