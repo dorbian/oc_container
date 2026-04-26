@@ -17,3 +17,4 @@ FROM build-${TARGETARCH}
 RUN opencode --version
 EXPOSE 4096
 ENTRYPOINT ["opencode"]
+CMD ["serve", "--hostname", "0.0.0.0", "--port", "4096"]
