@@ -3,6 +3,7 @@ name: opencode-container
 on:
   push:
     branches:
+      - main
       - dev
     paths:
       - packages/**
