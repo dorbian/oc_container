@@ -7,6 +7,7 @@ import { SessionPrompt } from "@/session/prompt"
 import { AsyncQueue } from "@/util/queue"
 import { errors } from "../error"
 import { OpenClawBridgeService } from "@/openclaw/bridge"
+import { OpenClawMcpRoutes } from "./openclaw-mcp"
 
 const ThreadParams = z.object({
   threadKey: z.string().min(1),
@@ -32,12 +33,18 @@ const EnsureBody = z.object({
   workspacePath: z.string(),
   title: z.string().optional(),
   image: z.string().optional(),
+  agent: z.string().optional(),
+  allowSubagents: z.boolean().optional(),
+  compactionPolicy: z.enum(["auto", "manual"]).optional(),
 })
 
 const PromptBody = z.object({
   workspacePath: z.string().optional(),
   title: z.string().optional(),
   image: z.string().optional(),
+  agent: z.string().optional(),
+  allowSubagents: z.boolean().optional(),
+  compactionPolicy: z.enum(["auto", "manual"]).optional(),
   prompt: zodObject(SessionPrompt.PromptInput).omit({ sessionID: true }),
 })
 
@@ -50,6 +57,7 @@ export const OpenClawRoutes = () => {
   const bridge = OpenClawBridgeService.default()
 
   return new Hono()
+    .route("/", OpenClawMcpRoutes())
     .get(
       "/thread/:threadKey",
       describeRoute({
@@ -102,6 +110,9 @@ export const OpenClawRoutes = () => {
           workspacePath: body.workspacePath,
           title: body.title,
           image: body.image,
+          agent: body.agent,
+          allowSubagents: body.allowSubagents,
+          compactionPolicy: body.compactionPolicy,
         })
         const { password: _password, ...safe } = record
         return c.json(safe)
@@ -134,6 +145,9 @@ export const OpenClawRoutes = () => {
           workspacePath: body.workspacePath,
           title: body.title,
           image: body.image,
+          agent: body.agent,
+          allowSubagents: body.allowSubagents,
+          compactionPolicy: body.compactionPolicy,
           prompt: body.prompt,
         })
         const { password: _password, ...safe } = record

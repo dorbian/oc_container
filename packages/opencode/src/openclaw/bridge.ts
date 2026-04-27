@@ -18,6 +18,8 @@ const DATA_MOUNT_PATH = "/var/opencode/data"
 const CONFIG_MOUNT_PATH = "/var/opencode/config"
 const RECONNECT_DELAY_MS = 250
 
+export type OpenClawCompactionPolicy = "auto" | "manual"
+
 export type OpenClawBridgeRecord = {
   threadKey: string
   workspacePath: string
@@ -30,6 +32,9 @@ export type OpenClawBridgeRecord = {
   image: string
   stateRoot: string
   password: string
+  defaultAgent?: string
+  allowSubagents?: boolean
+  compactionPolicy?: OpenClawCompactionPolicy
   port?: number
   createdAt: string
   updatedAt: string
@@ -67,6 +72,9 @@ export type OpenClawEnsureInput = {
   workspacePath: string
   title?: string
   image?: string
+  agent?: string
+  allowSubagents?: boolean
+  compactionPolicy?: OpenClawCompactionPolicy
 }
 
 export type OpenClawPromptInput = {
@@ -74,6 +82,9 @@ export type OpenClawPromptInput = {
   workspacePath?: string
   title?: string
   image?: string
+  agent?: string
+  allowSubagents?: boolean
+  compactionPolicy?: OpenClawCompactionPolicy
   prompt: Record<string, unknown>
 }
 
@@ -196,6 +207,45 @@ function basicAuth(password: string) {
   return `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
 }
 
+function buildContainerConfig(record: OpenClawBridgeRecord) {
+  return {
+    ...(record.compactionPolicy
+      ? {
+          compaction: {
+            auto: record.compactionPolicy === "auto",
+          },
+        }
+      : {}),
+  }
+}
+
+function appendSystem(base: unknown, addition: string) {
+  if (typeof base === "string" && base.trim()) return `${base}\n\n${addition}`
+  return addition
+}
+
+function mergePrompt(record: OpenClawBridgeRecord, input: OpenClawPromptInput) {
+  const prompt = structuredClone(input.prompt)
+  const agent = input.agent ?? record.defaultAgent
+  if (agent) prompt.agent = agent
+
+  const allowSubagents = input.allowSubagents ?? record.allowSubagents
+  if (allowSubagents === false) {
+    const tools =
+      prompt.tools && typeof prompt.tools === "object" && !Array.isArray(prompt.tools)
+        ? { ...(prompt.tools as Record<string, unknown>) }
+        : {}
+    tools.task = false
+    prompt.tools = tools
+    prompt.system = appendSystem(
+      prompt.system,
+      "Do not spawn or delegate work to subagents. Complete the task in this session only.",
+    )
+  }
+
+  return prompt
+}
+
 async function parseSSE(stream: ReadableStream<Uint8Array>, signal?: AbortSignal) {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
@@ -281,6 +331,11 @@ export class OpenClawBridge {
     return registry.sessions[threadKey]
   }
 
+  async list() {
+    const registry = await this.loadRegistry()
+    return Object.values(registry.sessions)
+  }
+
   private resolveRuntime(existing?: OpenClawBridgeRecord["runtime"]) {
     const explicit = process.env.OPENCODE_OPENCLAW_CONTAINER_RUNTIME
     if (explicit === "docker" || explicit === "podman") return explicit
@@ -334,6 +389,7 @@ export class OpenClawBridge {
     await mkdir(path.join(stateRoot, "state"), { recursive: true })
     await mkdir(path.join(stateRoot, "data"), { recursive: true })
     await mkdir(path.join(stateRoot, "config"), { recursive: true })
+    await writeFile(path.join(stateRoot, "config", "opencode.json"), JSON.stringify(buildContainerConfig(record), null, 2))
 
     await this.deps.execText([runtime, "rm", "-f", record.containerName], { nothrow: true })
 
@@ -432,19 +488,28 @@ export class OpenClawBridge {
     const hash = registryHash(input.threadKey)
     const createdAt = current?.createdAt ?? nowIso(this.deps)
     const image = input.image ?? current?.image ?? process.env.OPENCODE_OPENCLAW_IMAGE ?? DEFAULT_IMAGE
+    const defaultAgent = input.agent ?? current?.defaultAgent
+    const allowSubagents = input.allowSubagents ?? current?.allowSubagents
+    const compactionPolicy = input.compactionPolicy ?? current?.compactionPolicy
+    const requiresRestart =
+      current?.image !== undefined &&
+      (current.image !== image || current.compactionPolicy !== compactionPolicy)
     const next: OpenClawBridgeRecord = {
       threadKey: input.threadKey,
       workspacePath: input.workspacePath,
       workspaceMountPath: WORKSPACE_MOUNT_PATH,
       sessionID: current?.sessionID,
-      containerID: current?.containerID,
+      containerID: requiresRestart ? undefined : current?.containerID,
       containerName: current?.containerName ?? `opencode-openclaw-${sanitizeName(input.threadKey)}-${hash}`,
-      serverUrl: current?.serverUrl,
+      serverUrl: requiresRestart ? undefined : current?.serverUrl,
       runtime: current?.runtime,
       image,
       stateRoot: current?.stateRoot ?? path.join(Global.Path.state, "openclaw", hash),
       password: current?.password ?? randomBytes(18).toString("base64url"),
-      port: current?.port,
+      defaultAgent,
+      allowSubagents,
+      compactionPolicy,
+      port: requiresRestart ? undefined : current?.port,
       createdAt,
       updatedAt: nowIso(this.deps),
     }
@@ -461,11 +526,14 @@ export class OpenClawBridge {
       workspacePath: input.workspacePath ?? existing!.workspacePath,
       title: input.title,
       image: input.image,
+      agent: input.agent,
+      allowSubagents: input.allowSubagents,
+      compactionPolicy: input.compactionPolicy,
     })
     if (!record.sessionID) throw new Error(`Thread "${input.threadKey}" does not have a session`)
     await this.request(record, `/session/${record.sessionID}/prompt_async`, {
       method: "POST",
-      body: input.prompt,
+      body: mergePrompt(record, input),
     })
     return record
   }
