@@ -207,6 +207,40 @@ function basicAuth(password: string) {
   return `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
 }
 
+function trimTrailingSlashes(value: string) {
+  return value.replace(/[\\/]+$/, "")
+}
+
+function resolveMappedPrefix(kind: "workspace" | "state") {
+  const upper = kind.toUpperCase()
+  const containerPrefix = process.env[`OPENCODE_OPENCLAW_${upper}_CONTAINER_PREFIX`]
+  const hostPrefix = process.env[`OPENCODE_OPENCLAW_${upper}_HOST_PREFIX`]
+  if (!containerPrefix && !hostPrefix) return
+  if (!containerPrefix || !hostPrefix) {
+    throw new Error(
+      `Both OPENCODE_OPENCLAW_${upper}_CONTAINER_PREFIX and OPENCODE_OPENCLAW_${upper}_HOST_PREFIX must be set together.`,
+    )
+  }
+  return {
+    containerPrefix: trimTrailingSlashes(containerPrefix),
+    hostPrefix: trimTrailingSlashes(hostPrefix),
+  }
+}
+
+function translateMountPath(kind: "workspace" | "state", input: string) {
+  const mapping = resolveMappedPrefix(kind)
+  if (!mapping) return input
+  if (input === mapping.containerPrefix) return mapping.hostPrefix
+  const normalized = `${mapping.containerPrefix}${path.sep}`
+  if (!input.startsWith(normalized)) {
+    throw new Error(
+      `Path "${input}" is not under configured ${kind} prefix "${mapping.containerPrefix}".`,
+    )
+  }
+  const suffix = input.slice(mapping.containerPrefix.length).replace(/^[\\/]+/, "")
+  return path.join(mapping.hostPrefix, suffix)
+}
+
 function buildContainerConfig(record: OpenClawBridgeRecord) {
   return {
     ...(record.compactionPolicy
@@ -385,6 +419,8 @@ export class OpenClawBridge {
     const runtime = this.resolveRuntime(record.runtime)
     const port = await this.deps.getFreePort()
     const stateRoot = record.stateRoot
+    const runtimeWorkspacePath = translateMountPath("workspace", record.workspacePath)
+    const runtimeStateRoot = translateMountPath("state", stateRoot)
     const serverUrl = `http://127.0.0.1:${port}`
     await mkdir(path.join(stateRoot, "state"), { recursive: true })
     await mkdir(path.join(stateRoot, "data"), { recursive: true })
@@ -415,13 +451,13 @@ export class OpenClawBridge {
       "-e",
       `XDG_CONFIG_HOME=${CONFIG_MOUNT_PATH}`,
       "-v",
-      `${record.workspacePath}:${WORKSPACE_MOUNT_PATH}`,
+      `${runtimeWorkspacePath}:${WORKSPACE_MOUNT_PATH}`,
       "-v",
-      `${path.join(stateRoot, "state")}:${STATE_MOUNT_PATH}`,
+      `${path.join(runtimeStateRoot, "state")}:${STATE_MOUNT_PATH}`,
       "-v",
-      `${path.join(stateRoot, "data")}:${DATA_MOUNT_PATH}`,
+      `${path.join(runtimeStateRoot, "data")}:${DATA_MOUNT_PATH}`,
       "-v",
-      `${path.join(stateRoot, "config")}:${CONFIG_MOUNT_PATH}`,
+      `${path.join(runtimeStateRoot, "config")}:${CONFIG_MOUNT_PATH}`,
       record.image,
       "serve",
       "--hostname",
