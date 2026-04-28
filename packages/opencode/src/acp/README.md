@@ -42,6 +42,9 @@ opencode acp
 
 # Start in a specific directory
 opencode acp --cwd /path/to/project
+
+# Connect ACP to an existing persistent opencode serve backend
+opencode acp --server-url http://127.0.0.1:4096
 ```
 
 ### Question Tool Opt-In
@@ -72,10 +75,17 @@ Add to your Zed configuration (`~/.config/zed/settings.json`):
     "OpenCode": {
       "command": "opencode",
       "args": ["acp"]
+    },
+    "OpenCode Persistent": {
+      "command": "opencode",
+      "args": ["acp", "--server-url", "http://127.0.0.1:4096"],
+      "default_mode": "codex"
     }
   }
 }
 ```
+
+This `--server-url` mode is the intended wrapper shape when `opencode serve` runs in a persistent container and Zed needs ACP over `stdio`.
 
 ## Protocol Compliance
 

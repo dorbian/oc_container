@@ -99,10 +99,12 @@ export const TaskTool = Tool.define(
       const msg = yield* Effect.sync(() => MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID }))
       if (msg.info.role !== "assistant") return yield* Effect.fail(new Error("Not an assistant message"))
 
-      const model = next.model ?? {
-        modelID: msg.info.modelID,
-        providerID: msg.info.providerID,
-      }
+      const model =
+        next.model ??
+        ({
+          modelID: msg.info.modelID,
+          providerID: msg.info.providerID,
+        } as const)
 
       yield* ctx.metadata({
         title: params.description,
@@ -131,10 +133,14 @@ export const TaskTool = Tool.define(
             const result = yield* ops.prompt({
               messageID,
               sessionID: nextSession.id,
-              model: {
-                modelID: model.modelID,
-                providerID: model.providerID,
-              },
+              ...(next.model
+                ? {
+                    model: {
+                      modelID: model.modelID,
+                      providerID: model.providerID,
+                    },
+                  }
+                : {}),
               agent: next.name,
               tools: {
                 ...(canTodo ? {} : { todowrite: false }),

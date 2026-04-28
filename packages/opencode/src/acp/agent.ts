@@ -53,7 +53,7 @@ import { applyPatch } from "diff"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 
 type ModeOption = { id: string; name: string; description?: string }
-type ModelOption = { modelId: string; name: string }
+type ModelOption = { modelId: string; name: string; description?: string }
 const decodeTodos = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Array(Todo.Info)))
 
 const DEFAULT_VARIANT_VALUE = "default"
@@ -1728,22 +1728,58 @@ function buildAvailableModels(
 ): ModelOption[] {
   const includeVariants = options.includeVariants ?? false
   return providers.flatMap((provider) => {
-    const unsorted: Array<{ id: string; name: string; variants?: Record<string, any> }> = Object.values(provider.models)
+    const unsorted: Array<{
+      id: string
+      name: string
+      variants?: Record<string, any>
+      capabilities?: { reasoning?: boolean; tool_call?: boolean }
+      cost?: { input?: number }
+      limit?: { context?: number }
+    }> = Object.values(provider.models)
     const models = Provider.sort(unsorted)
     return models.flatMap((model) => {
       const base: ModelOption = {
         modelId: `${provider.id}/${model.id}`,
         name: `${provider.name}/${model.name}`,
+        description: describeModelOption(model),
       }
       if (!includeVariants || !model.variants) return [base]
       const variants = Object.keys(model.variants).filter((variant) => variant !== DEFAULT_VARIANT_VALUE)
       const variantOptions = variants.map((variant) => ({
         modelId: `${provider.id}/${model.id}/${variant}`,
         name: `${provider.name}/${model.name} (${variant})`,
+        description: describeModelOption(model, variant),
       }))
       return [base, ...variantOptions]
     })
   })
+}
+
+function describeModelOption(
+  model: {
+    capabilities?: { reasoning?: boolean; tool_call?: boolean }
+    cost?: { input?: number }
+    limit?: { context?: number }
+  },
+  variant?: string,
+) {
+  const parts: string[] = []
+  if (model.capabilities?.reasoning) parts.push("reasoning")
+  if (model.capabilities?.tool_call) parts.push("tools")
+  if (typeof model.limit?.context === "number") parts.push(`${formatContextWindow(model.limit.context)} context`)
+  if (model.cost?.input === 0) parts.push("free")
+  if (variant) parts.push(`variant: ${variant}`)
+  return parts.length ? parts.join(", ") : undefined
+}
+
+function formatContextWindow(tokens: number) {
+  if (tokens >= 1_000_000) return `${stripTrailingZeros(tokens / 1_000_000)}M`
+  if (tokens >= 1_000) return `${stripTrailingZeros(tokens / 1_000)}k`
+  return String(tokens)
+}
+
+function stripTrailingZeros(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, "")
 }
 
 function formatModelIdWithVariant(
@@ -1815,7 +1851,11 @@ function buildConfigOptions(input: {
       category: "model",
       type: "select",
       currentValue: input.currentModelId,
-      options: input.availableModels.map((m) => ({ value: m.modelId, name: m.name })),
+      options: input.availableModels.map((m) => ({
+        value: m.modelId,
+        name: m.name,
+        ...(m.description ? { description: m.description } : {}),
+      })),
     },
   ]
   if (input.modes) {

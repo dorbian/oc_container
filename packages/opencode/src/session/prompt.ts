@@ -733,7 +733,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
         throw error
       }
-      const model = input.model ?? agent.model ?? (yield* lastModel(input.sessionID))
+      const model = yield* resolveAgentModel({
+        agent,
+        sessionID: input.sessionID,
+        model: input.model,
+      })
       const userMsg: MessageV2.User = {
         id: input.messageID ?? MessageID.ascending(),
         sessionID: input.sessionID,
@@ -923,6 +927,28 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       return yield* provider.defaultModel()
     })
 
+    const prefersSmallModel = (agent: Agent.Info) =>
+      ["plan", "explore", "summary", "title", "compaction"].includes(agent.name)
+
+    const resolveAgentModel = Effect.fn("SessionPrompt.resolveAgentModel")(function* (input: {
+      agent: Agent.Info
+      sessionID: SessionID
+      model?: { providerID: ProviderID; modelID: ModelID }
+    }) {
+      if (input.model) return input.model
+      if (input.agent.model) return input.agent.model
+
+      const current = yield* lastModel(input.sessionID)
+      if (!prefersSmallModel(input.agent)) return current
+
+      const small = yield* provider.getSmallModel(current.providerID)
+      if (!small) return current
+      return {
+        providerID: small.providerID,
+        modelID: small.id,
+      }
+    })
+
     const createUserMessage = Effect.fn("SessionPrompt.createUserMessage")(function* (input: PromptInput) {
       const agentName = input.agent || (yield* agents.defaultAgent())
       const ag = yield* agents.get(agentName)
@@ -934,7 +960,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         throw error
       }
 
-      const model = input.model ?? ag.model ?? (yield* lastModel(input.sessionID))
+      const model = yield* resolveAgentModel({
+        agent: ag,
+        sessionID: input.sessionID,
+        model: input.model,
+      })
       const same = ag.model && model.providerID === ag.model.providerID && model.modelID === ag.model.modelID
       const full =
         !input.variant && ag.variant && same
